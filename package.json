@@ -1,0 +1,33 @@
+{
+  "name": "far-islands",
+  "private": true,
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --build",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:e2e": "playwright test --config client/playwright.config.ts",
+    "dev:server": "pnpm --filter @farislands/server dev",
+    "dev:client": "pnpm --filter @farislands/client dev",
+    "prepare": "simple-git-hooks"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@playwright/test": "1.61.1",
+    "happy-dom": "^20.10.6",
+    "lint-staged": "17.0.8",
+    "simple-git-hooks": "2.13.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,json}": "biome check --write --no-errors-on-unmatched"
+  }
+}

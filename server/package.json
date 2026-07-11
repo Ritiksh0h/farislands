@@ -1,0 +1,20 @@
+{
+  "name": "@farislands/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsup src/main.ts --format esm --dts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@farislands/shared": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "tsx": "4.23.0",
+    "tsup": "8.5.1"
+  }
+}

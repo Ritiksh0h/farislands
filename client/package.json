@@ -1,0 +1,15 @@
+{
+  "name": "@farislands/client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@farislands/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "8.1.4"
+  }
+}
