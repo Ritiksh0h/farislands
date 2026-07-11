@@ -1,4 +1,10 @@
-import type { HQState, ModeConfig, PlayerColor, Position } from "./schemas.js";
+import type {
+  HQState,
+  ModeConfig,
+  PlayerColor,
+  Position,
+  ShipType,
+} from "./schemas.js";
 
 // ---------------------------------------------------------------------------
 // Board layout
@@ -66,6 +72,13 @@ export const PLAYER_COLORS: PlayerColor[] = [
 // intermediate is reachable via the 2-zone diagonal, resolving as a ram there.
 // ---------------------------------------------------------------------------
 export const RAM_THROUGH = true;
+
+// Ship launch costs (§5/§12). Cruiser is intentionally absent — never launchable.
+export const SHIP_COST: Partial<Record<ShipType, number>> = {
+  corvette: 100,
+  submarine: 200,
+  destroyer: 300,
+};
 
 // ---------------------------------------------------------------------------
 // Mode presets

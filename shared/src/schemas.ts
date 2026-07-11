@@ -125,7 +125,7 @@ export const GameStateSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Move (discriminated union — move-only for Phase 1)
+// Move (discriminated union)
 // ---------------------------------------------------------------------------
 
 export const MoveActionSchema = z.object({
@@ -134,7 +134,16 @@ export const MoveActionSchema = z.object({
   to: PositionSchema,
 });
 
-export const MoveSchema = z.discriminatedUnion("type", [MoveActionSchema]);
+export const LaunchActionSchema = z.object({
+  type: z.literal("launch"),
+  shipId: z.string(),
+  to: PositionSchema,
+});
+
+export const MoveSchema = z.discriminatedUnion("type", [
+  MoveActionSchema,
+  LaunchActionSchema,
+]);
 
 // ---------------------------------------------------------------------------
 // Inferred TypeScript types (single source of truth — no separate types.ts)
@@ -155,6 +164,7 @@ export type ModeConfig = z.infer<typeof ModeConfigSchema>;
 export type IslandOwnership = z.infer<typeof IslandOwnershipSchema>;
 export type GameState = z.infer<typeof GameStateSchema>;
 export type MoveAction = z.infer<typeof MoveActionSchema>;
+export type LaunchAction = z.infer<typeof LaunchActionSchema>;
 export type Move = z.infer<typeof MoveSchema>;
 
 // ---------------------------------------------------------------------------

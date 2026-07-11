@@ -831,3 +831,379 @@ function posEq(
 ): boolean {
   return a.col === b.col && a.row === b.row;
 }
+
+// ---------------------------------------------------------------------------
+// Launching + economy
+// ---------------------------------------------------------------------------
+
+describe("legalMoves: launches", () => {
+  it("affordable launch appears in legalMoves", () => {
+    const purpleBase = ISLAND_DEF.purple.commandBase; // (7,4)
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: purpleBase,
+          blocked: false,
+        },
+      ],
+    });
+    // Give purple player a corvette in inventory and enough gold
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [{ id: "purple-corvette-1", type: "corvette" }];
+    s.players[0]!.gold = 1000;
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    // Purple owns purple's island; 9 zones, but (7,4) is occupied by cruiser
+    expect(launches.length).toBeGreaterThan(0);
+    expect(launches.every((m) => m.type === "launch")).toBe(true);
+  });
+
+  it("unaffordable launch NOT in legalMoves (gold < cost + premium)", () => {
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: ISLAND_DEF.purple.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    // destroyer costs 300; set gold to 299
+    s.players[0]!.inventory = [{ id: "purple-destroyer", type: "destroyer" }];
+    s.players[0]!.gold = 299;
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    expect(launches).toHaveLength(0);
+  });
+
+  it("unaffordable due to premium NOT in legalMoves", () => {
+    // Purple (6,4) has premium 200. Corvette cost 100. Total 300.
+    // Gold = 299 → can't afford the 200-premium zone.
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: ISLAND_DEF.purple.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [{ id: "purple-corvette-1", type: "corvette" }];
+    s.players[0]!.gold = 299; // can afford 100-premium zones (cost 200) but not 200-premium (cost 300)
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    // Can still launch to free/100-premium zones (cost 100 and 200) but not (6,4) (cost 300)
+    expect(launches.some((m) => m.to.col === 6 && m.to.row === 4)).toBe(false);
+    // But can reach free zones (total 100 ≤ 299)
+    expect(launches.length).toBeGreaterThan(0);
+  });
+
+  it("launch onto occupied zone NOT in legalMoves", () => {
+    const purpleBase = ISLAND_DEF.purple.commandBase; // (7,4)
+    // Block (7,5) with purple's own corvette on the board
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: purpleBase,
+          blocked: false,
+        },
+        {
+          id: "green-corvette",
+          type: "corvette",
+          ownerId: P1,
+          pos: { col: 7, row: 5 },
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [{ id: "purple-corvette-1", type: "corvette" }];
+    s.players[0]!.gold = 1000;
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    expect(launches.some((m) => m.to.col === 7 && m.to.row === 5)).toBe(false);
+  });
+
+  it("launch onto non-owned island NOT in legalMoves", () => {
+    // Purple doesn't own yellow's island; launching to yellow's zones illegal
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: ISLAND_DEF.purple.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [{ id: "purple-corvette-1", type: "corvette" }];
+    s.players[0]!.gold = 1000;
+
+    const yellowBase = ISLAND_DEF.yellow.commandBase;
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    // None of the launches should target yellow's zone
+    const yellowLaunches = launches.filter(
+      (m) =>
+        Math.abs(m.to.col - yellowBase.col) <= 1 &&
+        Math.abs(m.to.row - yellowBase.row) <= 1,
+    );
+    expect(yellowLaunches).toHaveLength(0);
+  });
+
+  it("cruiser never appears as a launch candidate", () => {
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: ISLAND_DEF.purple.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    // Force a cruiser into inventory (artificial — wouldn't happen in real play)
+    s.players[0]!.inventory = [{ id: "purple-cruiser-2", type: "cruiser" }];
+    s.players[0]!.gold = 9999;
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    expect(launches).toHaveLength(0);
+  });
+
+  it("launches only offered for current player's inventory, not opponent's", () => {
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: ISLAND_DEF.purple.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [];
+    s.players[0]!.gold = 1000;
+    // Give opponent a corvette in inventory
+    s.players[1]!.inventory = [{ id: "green-corvette-1", type: "corvette" }];
+
+    const launches = legalMoves(s).filter((m) => m.type === "launch");
+    // No launches since current player has empty inventory
+    expect(launches).toHaveLength(0);
+    // And the opponent's ship should not appear
+    expect(launches.some((m) => m.shipId === "green-corvette-1")).toBe(false);
+  });
+});
+
+describe("applyMove: launch", () => {
+  // Helper: purple player at their base, corvette in inventory, 1000 gold
+  function launchState(): GameState {
+    const purpleBase = ISLAND_DEF.purple.commandBase;
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: purpleBase,
+          blocked: false,
+        },
+        {
+          id: "green-cruiser",
+          type: "cruiser",
+          ownerId: P1,
+          pos: ISLAND_DEF.green.commandBase,
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.players[0]!.inventory = [{ id: "purple-corvette-1", type: "corvette" }];
+    s.players[0]!.gold = 1000;
+    return s;
+  }
+
+  it("ship moves from inventory to board at target zone", () => {
+    const state = launchState();
+    // Launch to (8,4) — a free zone of purple's island
+    const result = applyMove(state, {
+      type: "launch",
+      shipId: "purple-corvette-1",
+      to: { col: 8, row: 4 },
+    });
+    expect(result.board.ships.some((s) => s.id === "purple-corvette-1")).toBe(
+      true,
+    );
+    expect(
+      result.board.ships.find((s) => s.id === "purple-corvette-1")?.pos,
+    ).toEqual({ col: 8, row: 4 });
+    expect(
+      result.players[0]!.inventory.some((s) => s.id === "purple-corvette-1"),
+    ).toBe(false);
+  });
+
+  it("player.gold decremented by cost + premium", () => {
+    const state = launchState();
+    // (7,5) has premium 100; corvette cost 100 → total 200
+    const result = applyMove(state, {
+      type: "launch",
+      shipId: "purple-corvette-1",
+      to: { col: 7, row: 5 },
+    });
+    expect(result.players[0]!.gold).toBe(1000 - 200);
+  });
+
+  it("gold conservation: player.gold + hq.gold unchanged by a launch", () => {
+    const state = launchState();
+    const before = state.players[0]!.gold + state.hq.gold;
+    const result = applyMove(state, {
+      type: "launch",
+      shipId: "purple-corvette-1",
+      to: { col: 7, row: 5 }, // premium 100, cost 100 → 200 transferred
+    });
+    const after = result.players[0]!.gold + result.hq.gold;
+    expect(after).toBe(before);
+  });
+
+  it("hq.gold increased by cost + premium", () => {
+    const state = launchState();
+    const hqBefore = state.hq.gold;
+    const result = applyMove(state, {
+      type: "launch",
+      shipId: "purple-corvette-1",
+      to: { col: 7, row: 5 }, // premium 100, cost 100 → 200
+    });
+    expect(result.hq.gold).toBe(hqBefore + 200);
+  });
+
+  it("illegal launch throws", () => {
+    const state = launchState();
+    // Attempt to launch to green's island (not owned by purple)
+    expect(() =>
+      applyMove(state, {
+        type: "launch",
+        shipId: "purple-corvette-1",
+        to: ISLAND_DEF.green.commandBase,
+      }),
+    ).toThrow("illegal move");
+  });
+});
+
+describe("ram: relaunchEnabled — destroyed non-cruiser returns to inventory", () => {
+  it("relaunchEnabled=true: rammed corvette returned to enemy inventory", () => {
+    // GOLD_PRODUCTION_CONFIG has relaunchEnabled: true
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: { col: 4, row: 4 },
+          blocked: false,
+        },
+        {
+          id: "green-corvette",
+          type: "corvette",
+          ownerId: P1,
+          pos: { col: 5, row: 5 },
+          blocked: false,
+        },
+      ],
+    });
+    const result = applyMove(state, {
+      type: "move",
+      shipId: "purple-cruiser",
+      to: { col: 5, row: 5 },
+    });
+    expect(result.board.ships.some((s) => s.id === "green-corvette")).toBe(
+      false,
+    );
+    expect(
+      result.players
+        .find((p) => p.id === P1)
+        ?.inventory.some((s) => s.id === "green-corvette"),
+    ).toBe(true);
+  });
+
+  it("relaunchEnabled=false: rammed corvette NOT returned to inventory", () => {
+    const state = makeState({
+      ships: [
+        {
+          id: "purple-cruiser",
+          type: "cruiser",
+          ownerId: P0,
+          pos: { col: 4, row: 4 },
+          blocked: false,
+        },
+        {
+          id: "green-corvette",
+          type: "corvette",
+          ownerId: P1,
+          pos: { col: 5, row: 5 },
+          blocked: false,
+        },
+      ],
+    });
+    const s = structuredClone(state) as GameState;
+    s.mode = { ...s.mode, relaunchEnabled: false };
+
+    const result = applyMove(s, {
+      type: "move",
+      shipId: "purple-cruiser",
+      to: { col: 5, row: 5 },
+    });
+    expect(result.board.ships.some((sh) => sh.id === "green-corvette")).toBe(
+      false,
+    );
+    expect(
+      result.players
+        .find((p) => p.id === P1)
+        ?.inventory.some((sh) => sh.id === "green-corvette"),
+    ).toBe(false);
+  });
+
+  it("rammed corvette can be relaunched on owner's next turn (relaunch is a loop)", () => {
+    // Construct the post-ram state: green-corvette already in P1's inventory, P1's turn
+    const state = makeState({ currentPlayerIndex: 1 });
+    const s = structuredClone(state) as GameState;
+    s.players[1]!.inventory = [{ id: "green-corvette", type: "corvette" }];
+    // Green cruiser sits at (1,4) — commandBase is occupied. Pick (0,4): free, no premium, cost=100.
+    const target = { col: 0, row: 4 };
+
+    const launchOffer = legalMoves(s).find(
+      (m) =>
+        m.type === "launch" &&
+        m.shipId === "green-corvette" &&
+        posEq(m.to, target),
+    );
+    expect(launchOffer).toBeDefined();
+
+    const next = applyMove(s, launchOffer!);
+    expect(
+      next.board.ships.some(
+        (sh) => sh.id === "green-corvette" && posEq(sh.pos, target),
+      ),
+    ).toBe(true);
+    expect(
+      next.players
+        .find((p) => p.id === P1)
+        ?.inventory.some((sh) => sh.id === "green-corvette"),
+    ).toBe(false);
+  });
+});

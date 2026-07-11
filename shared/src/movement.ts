@@ -1,4 +1,4 @@
-import { ISLAND_DEF, PLAYER_COLORS } from "./constants.js";
+import { ISLAND_DEF, PLAYER_COLORS, SHIP_COST } from "./constants.js";
 import type {
   GameState,
   IslandOwnership,
@@ -39,6 +39,21 @@ function isOnOwnBase(
     }
   }
   return false;
+}
+
+// Returns the island color whose 3×3 zone contains pos, or undefined.
+function islandColorOfZone(pos: Position): PlayerColor | undefined {
+  return PLAYER_COLORS.find((c) => {
+    const b = ISLAND_DEF[c].commandBase;
+    return Math.abs(pos.col - b.col) <= 1 && Math.abs(pos.row - b.row) <= 1;
+  }) as PlayerColor | undefined;
+}
+
+function zonePremium(pos: Position): number {
+  const color = islandColorOfZone(pos);
+  return color
+    ? (ISLAND_DEF[color].launchPremiums[`${pos.col},${pos.row}`] ?? 0)
+    : 0;
 }
 
 // Candidate far-square positions before RAM_THROUGH resolution.
@@ -102,13 +117,14 @@ export function legalMoves(state: GameState): Move[] {
   const seen = new Set<string>();
   const moves: Move[] = [];
 
-  const emit = (shipId: string, to: Position) => {
-    const key = `${shipId}:${to.col},${to.row}`;
+  const emitMove = (shipId: string, to: Position) => {
+    const key = `move:${shipId}:${to.col},${to.row}`;
     if (seen.has(key)) return;
     seen.add(key);
     moves.push({ type: "move", shipId, to });
   };
 
+  // Board-ship moves
   for (const ship of ships) {
     if (ship.ownerId !== currentPlayer.id || ship.blocked) continue;
 
@@ -121,7 +137,7 @@ export function legalMoves(state: GameState): Move[] {
         if (occ.ownerId === currentPlayer.id) continue;
         if (isOnOwnBase(target, occ.ownerId, islandOwnership)) continue;
       }
-      emit(ship.id, target);
+      emitMove(ship.id, target);
     }
 
     for (const far of twoZone) {
@@ -133,7 +149,7 @@ export function legalMoves(state: GameState): Move[] {
         if (midOcc.ownerId === currentPlayer.id) continue;
         if (isOnOwnBase(m, midOcc.ownerId, islandOwnership)) continue;
         // Rammable enemy at intermediate — RAM_THROUGH: actual stop = m
-        emit(ship.id, m);
+        emitMove(ship.id, m);
         continue;
       }
 
@@ -143,7 +159,31 @@ export function legalMoves(state: GameState): Move[] {
         if (farOcc.ownerId === currentPlayer.id) continue;
         if (isOnOwnBase(far, farOcc.ownerId, islandOwnership)) continue;
       }
-      emit(ship.id, far);
+      emitMove(ship.id, far);
+    }
+  }
+
+  // Launch moves — only when mode allows (§4: "Not available in Gold Rush")
+  if (state.mode.relaunchEnabled) {
+    for (const color of PLAYER_COLORS) {
+      if (islandOwnership[color as PlayerColor] !== currentPlayer.id) continue;
+      const base = ISLAND_DEF[color].commandBase;
+
+      for (let dc = -1; dc <= 1; dc++) {
+        for (let dr = -1; dr <= 1; dr++) {
+          const zone: Position = { col: base.col + dc, row: base.row + dr };
+          if (shipAt(ships, zone)) continue; // occupied
+
+          const premium = zonePremium(zone);
+
+          for (const invShip of currentPlayer.inventory) {
+            if (invShip.type === "cruiser") continue; // never launchable
+            const cost = SHIP_COST[invShip.type] ?? 0;
+            if (currentPlayer.gold < cost + premium) continue;
+            moves.push({ type: "launch", shipId: invShip.id, to: zone });
+          }
+        }
+      }
     }
   }
 
@@ -169,14 +209,24 @@ function eliminatePlayer(
   state.board.ships = state.board.ships.filter((s) => s.ownerId !== defeatedId);
 }
 
+function advanceTurn(next: GameState): void {
+  const total = next.players.length;
+  const prevIdx = next.currentPlayerIndex;
+  let idx = prevIdx;
+  for (let i = 0; i < total; i++) {
+    idx = (idx + 1) % total;
+    if (!next.players[idx]!.defeated) break;
+  }
+  if (idx <= prevIdx) next.turnNumber += 1;
+  next.currentPlayerIndex = idx;
+}
+
 export function applyMove(state: GameState, move: Move): GameState {
   const legal = legalMoves(state);
-  const ok =
-    move.type === "move" &&
-    legal.some(
-      (m) =>
-        m.type === "move" && m.shipId === move.shipId && posEq(m.to, move.to),
-    );
+  const ok = legal.some(
+    (m) =>
+      m.type === move.type && m.shipId === move.shipId && posEq(m.to, move.to),
+  );
 
   if (!ok) throw new Error("illegal move");
 
@@ -184,6 +234,35 @@ export function applyMove(state: GameState, move: Move): GameState {
   const currentPlayer = next.players[next.currentPlayerIndex]!;
   const target = move.to;
 
+  // -------------------------------------------------------------------------
+  // Launch
+  // -------------------------------------------------------------------------
+  if (move.type === "launch") {
+    const invIdx = currentPlayer.inventory.findIndex(
+      (s) => s.id === move.shipId,
+    );
+    const invShip = currentPlayer.inventory[invIdx]!;
+    const cost = SHIP_COST[invShip.type] ?? 0;
+    const premium = zonePremium(target);
+
+    currentPlayer.gold -= cost + premium;
+    next.hq.gold += cost + premium;
+    currentPlayer.inventory.splice(invIdx, 1);
+    next.board.ships.push({
+      id: invShip.id,
+      type: invShip.type,
+      ownerId: currentPlayer.id,
+      pos: target,
+      blocked: false,
+    });
+
+    advanceTurn(next);
+    return next;
+  }
+
+  // -------------------------------------------------------------------------
+  // Move
+  // -------------------------------------------------------------------------
   const ship = next.board.ships.find((s) => s.id === move.shipId)!;
   const enemy = next.board.ships.find(
     (s) => s.ownerId !== currentPlayer.id && posEq(s.pos, target),
@@ -196,6 +275,12 @@ export function applyMove(state: GameState, move: Move): GameState {
     next.board.ships = next.board.ships.filter((s) => s.id !== enemy.id);
     if (enemy.type === "cruiser") {
       eliminatePlayer(next, enemy.ownerId, currentPlayer.id);
+    } else if (next.mode.relaunchEnabled) {
+      // Non-cruiser returns to enemy inventory for future relaunch
+      const enemyPlayer = next.players.find((p) => p.id === enemy.ownerId);
+      if (enemyPlayer && !enemyPlayer.defeated) {
+        enemyPlayer.inventory.push({ id: enemy.id, type: enemy.type });
+      }
     }
   }
 
@@ -237,16 +322,6 @@ export function applyMove(state: GameState, move: Move): GameState {
     return next;
   }
 
-  // Advance turn — skip defeated players; increment turnNumber on wrap
-  const total = next.players.length;
-  const prevIdx = next.currentPlayerIndex;
-  let idx = prevIdx;
-  for (let i = 0; i < total; i++) {
-    idx = (idx + 1) % total;
-    if (!next.players[idx]!.defeated) break;
-  }
-  if (idx <= prevIdx) next.turnNumber += 1;
-  next.currentPlayerIndex = idx;
-
+  advanceTurn(next);
   return next;
 }
