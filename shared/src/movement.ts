@@ -1,4 +1,10 @@
-import { ISLAND_DEF, PLAYER_COLORS, SHIP_COST } from "./constants.js";
+import {
+  ISLAND_DEF,
+  PLAYER_COLORS,
+  SHIP_COST,
+  WEAPON_OF_SHIP,
+  WEAPON_OFFSETS,
+} from "./constants.js";
 import type {
   GameState,
   IslandOwnership,
@@ -7,6 +13,7 @@ import type {
   Position,
   ShipState,
 } from "./schemas.js";
+import { StealChoiceSchema } from "./schemas.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -109,19 +116,60 @@ function candidates(ship: ShipState): {
 // Public API
 // ---------------------------------------------------------------------------
 
+// Canonical key for a move. The full action-type prefix guarantees keys from
+// different types can never collide. Used for legality checks and dedup.
+export function moveKey(m: Move): string {
+  switch (m.type) {
+    case "move":
+    case "launch":
+      return `${m.type}:${m.shipId}:${m.to.col},${m.to.row}`;
+    case "useWeapon":
+      return `useWeapon:${m.shipId}:${m.to.col},${m.to.row}:${m.steal ?? ""}`;
+    case "defend":
+      return `defend:${m.shipId}`;
+    case "decline":
+      return "decline";
+  }
+}
+
 export function legalMoves(state: GameState): Move[] {
   const currentPlayer = state.players[state.currentPlayerIndex]!;
   const { ships } = state.board;
   const { islandOwnership } = state;
 
+  // Defence interrupt: while an attack pends, only the DEFENDER may act —
+  // play a defence card (if able) or decline. Decline is always available.
+  const pa = state.pendingAttack;
+  if (pa) {
+    const moves: Move[] = [];
+    const target = ships.find((s) => s.id === pa.targetShipId)!;
+    const defender = state.players.find((p) => p.id === target.ownerId)!;
+    if (defender.hand.includes("defence")) {
+      for (const cv of ships) {
+        if (cv.ownerId !== defender.id || cv.type !== "corvette" || cv.blocked)
+          continue;
+        // Distance exactly 1 — a corvette cannot defend its own zone (§7)
+        const inRange = WEAPON_OFFSETS.defence.some(
+          (o) =>
+            cv.pos.col + o.dc === target.pos.col &&
+            cv.pos.row + o.dr === target.pos.row,
+        );
+        if (inRange) moves.push({ type: "defend", shipId: cv.id });
+      }
+    }
+    moves.push({ type: "decline" });
+    return moves;
+  }
+
   const seen = new Set<string>();
   const moves: Move[] = [];
 
   const emitMove = (shipId: string, to: Position) => {
-    const key = `move:${shipId}:${to.col},${to.row}`;
+    const mv: Move = { type: "move", shipId, to };
+    const key = moveKey(mv);
     if (seen.has(key)) return;
     seen.add(key);
-    moves.push({ type: "move", shipId, to });
+    moves.push(mv);
   };
 
   // Board-ship moves
@@ -187,6 +235,34 @@ export function legalMoves(state: GameState): Move[] {
     }
   }
 
+  // Weapon use — needs the matching card in hand; targets enemy-occupied
+  // zones only. Base protection does NOT apply to weapons (§3). Pirate emits
+  // every steal choice regardless of the defender's holdings — legality must
+  // never depend on hidden information (empty steals resolve as no-ops).
+  for (const ship of ships) {
+    if (ship.ownerId !== currentPlayer.id || ship.blocked) continue;
+    const card = WEAPON_OF_SHIP[ship.type];
+    if (card === "defence" || !currentPlayer.hand.includes(card)) continue;
+
+    for (const o of WEAPON_OFFSETS[card]) {
+      const zone: Position = {
+        col: ship.pos.col + o.dc,
+        row: ship.pos.row + o.dr,
+      };
+      if (!inBounds(zone)) continue;
+      const victim = shipAt(ships, zone);
+      if (!victim || victim.ownerId === currentPlayer.id) continue;
+
+      if (card === "pirate") {
+        for (const steal of StealChoiceSchema.options) {
+          moves.push({ type: "useWeapon", shipId: ship.id, to: zone, steal });
+        }
+      } else {
+        moves.push({ type: "useWeapon", shipId: ship.id, to: zone });
+      }
+    }
+  }
+
   return moves;
 }
 
@@ -209,6 +285,25 @@ function eliminatePlayer(
   state.board.ships = state.board.ships.filter((s) => s.ownerId !== defeatedId);
 }
 
+// Removes a ship from the board. A cruiser kill eliminates its owner; other
+// ships return to their owner's inventory when the mode allows relaunch.
+// Shared by ram and missile resolution so the two can't diverge.
+function destroyShip(
+  next: GameState,
+  victim: ShipState,
+  byPlayerId: string,
+): void {
+  next.board.ships = next.board.ships.filter((s) => s.id !== victim.id);
+  if (victim.type === "cruiser") {
+    eliminatePlayer(next, victim.ownerId, byPlayerId);
+  } else if (next.mode.relaunchEnabled) {
+    const owner = next.players.find((p) => p.id === victim.ownerId);
+    if (owner && !owner.defeated) {
+      owner.inventory.push({ id: victim.id, type: victim.type });
+    }
+  }
+}
+
 function advanceTurn(next: GameState): void {
   const total = next.players.length;
   const prevIdx = next.currentPlayerIndex;
@@ -221,18 +316,89 @@ function advanceTurn(next: GameState): void {
   next.currentPlayerIndex = idx;
 }
 
-export function applyMove(state: GameState, move: Move): GameState {
-  const legal = legalMoves(state);
-  const ok = legal.some(
-    (m) =>
-      m.type === move.type && m.shipId === move.shipId && posEq(m.to, move.to),
-  );
+// Every completed action ends here: finish the game if one player remains,
+// otherwise advance the turn (skipping defeated players).
+function endAction(next: GameState): void {
+  const alive = next.players.filter((p) => !p.defeated);
+  if (alive.length === 1) {
+    next.phase = "finished";
+    next.winner = alive[0]!.id;
+    return;
+  }
+  advanceTurn(next);
+}
 
-  if (!ok) throw new Error("illegal move");
+export function applyMove(state: GameState, move: Move): GameState {
+  const key = moveKey(move);
+  if (!legalMoves(state).some((m) => moveKey(m) === key))
+    throw new Error("illegal move");
 
   const next = structuredClone(state);
   const currentPlayer = next.players[next.currentPlayerIndex]!;
+
+  // -------------------------------------------------------------------------
+  // Defence interrupt resolution — the actor is the DEFENDER, not
+  // players[currentPlayerIndex] (that is still the attacker).
+  // -------------------------------------------------------------------------
+  if (move.type === "defend" || move.type === "decline") {
+    const pa = next.pendingAttack!;
+    const attackingShip = next.board.ships.find(
+      (s) => s.id === pa.attackingShipId,
+    )!;
+    const target = next.board.ships.find((s) => s.id === pa.targetShipId)!;
+    const defender = next.players.find((p) => p.id === target.ownerId)!;
+
+    if (move.type === "defend") {
+      // Attack cancelled; attacker's card is already in HQ (attack time)
+      defender.hand.splice(defender.hand.indexOf("defence"), 1);
+      next.hq.cards.defence += 1;
+    } else {
+      const attacker = next.players.find(
+        (p) => p.id === attackingShip.ownerId,
+      )!;
+      const card = WEAPON_OF_SHIP[attackingShip.type];
+      if (card === "missile") {
+        destroyShip(next, target, attacker.id);
+      } else if (card === "pirate") {
+        if (pa.steal === "gold") {
+          attacker.gold += defender.gold;
+          defender.gold = 0;
+        } else if (pa.steal === "papers") {
+          attacker.papers += defender.papers;
+          defender.papers = 0;
+        } else {
+          attacker.hand.push(...defender.hand);
+          defender.hand = [];
+        }
+      } else {
+        target.blocked = true; // jammer
+      }
+    }
+
+    next.pendingAttack = null;
+    endAction(next);
+    return next;
+  }
+
   const target = move.to;
+
+  // -------------------------------------------------------------------------
+  // Use weapon: card goes hand → HQ now; the attack pends until the defender
+  // responds. No turn advance — the defender acts next.
+  // -------------------------------------------------------------------------
+  if (move.type === "useWeapon") {
+    const ship = next.board.ships.find((s) => s.id === move.shipId)!;
+    const card = WEAPON_OF_SHIP[ship.type];
+    currentPlayer.hand.splice(currentPlayer.hand.indexOf(card), 1);
+    next.hq.cards[card] += 1;
+    const victim = shipAt(next.board.ships, target)!;
+    next.pendingAttack = {
+      attackingShipId: ship.id,
+      targetShipId: victim.id,
+      steal: move.steal ?? null,
+    };
+    return next;
+  }
 
   // -------------------------------------------------------------------------
   // Launch
@@ -256,7 +422,7 @@ export function applyMove(state: GameState, move: Move): GameState {
       blocked: false,
     });
 
-    advanceTurn(next);
+    endAction(next);
     return next;
   }
 
@@ -272,16 +438,7 @@ export function applyMove(state: GameState, move: Move): GameState {
 
   // Ram
   if (enemy) {
-    next.board.ships = next.board.ships.filter((s) => s.id !== enemy.id);
-    if (enemy.type === "cruiser") {
-      eliminatePlayer(next, enemy.ownerId, currentPlayer.id);
-    } else if (next.mode.relaunchEnabled) {
-      // Non-cruiser returns to enemy inventory for future relaunch
-      const enemyPlayer = next.players.find((p) => p.id === enemy.ownerId);
-      if (enemyPlayer && !enemyPlayer.defeated) {
-        enemyPlayer.inventory.push({ id: enemy.id, type: enemy.type });
-      }
-    }
+    destroyShip(next, enemy, currentPlayer.id);
   }
 
   // Pick up gold
@@ -314,14 +471,6 @@ export function applyMove(state: GameState, move: Move): GameState {
     break;
   }
 
-  // Game-over check
-  const alive = next.players.filter((p) => !p.defeated);
-  if (alive.length === 1) {
-    next.phase = "finished";
-    next.winner = alive[0]!.id;
-    return next;
-  }
-
-  advanceTurn(next);
+  endAction(next);
   return next;
 }

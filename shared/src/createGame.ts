@@ -87,6 +87,7 @@ export function createGame(
     board: { ships, gold: [], papers },
     islandOwnership,
     hq: structuredClone(INITIAL_HQ),
+    pendingAttack: null,
     rngSeed: rng,
     winner: null,
   };

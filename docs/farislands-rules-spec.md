@@ -78,6 +78,8 @@ Offsets `(dx,dy)` are relative to the acting ship; each weapon hits **one** targ
 
 (Elegant symmetry: missile = pirate's diagonals ∪ jammer's orthogonals.)
 
+**Defence coverage (settled decision):** Defence covers the 8 zones adjacent to the defending corvette (Chebyshev distance exactly 1), per the card diagram. A corvette CANNOT defend its own zone — a lone corvette holding a defence card cannot protect itself; a second friendly corvette must be adjacent to the target. (The original implementation used distance ≤1, allowing self-defence; we follow the card diagram instead. Flagged as a candidate to revisit in playtesting.)
+
 **Economy:** price = **500 − 100 × (research papers held)** (3 papers → 200). Random draw, kept secret, single-use, returned to HQ after use, and using it does **not** move the ship. Non-defence weapons only on your turn.
 
 ---

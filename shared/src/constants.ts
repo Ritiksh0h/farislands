@@ -4,6 +4,7 @@ import type {
   PlayerColor,
   Position,
   ShipType,
+  WeaponCard,
 } from "./schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,56 @@ export const SHIP_COST: Partial<Record<ShipType, number>> = {
   submarine: 200,
   destroyer: 300,
 };
+
+// ---------------------------------------------------------------------------
+// Weapons (§7)
+// ---------------------------------------------------------------------------
+
+export const WEAPON_OF_SHIP: Record<ShipType, WeaponCard> = {
+  cruiser: "missile",
+  destroyer: "pirate",
+  submarine: "jammer",
+  corvette: "defence",
+};
+
+// §7 exact footprints — target-zone offsets from the acting ship.
+// For defence: the zones the corvette covers, distance exactly 1 — a corvette
+// cannot defend its own zone (settled decision, see spec §7).
+export const WEAPON_OFFSETS: Record<WeaponCard, { dc: number; dr: number }[]> =
+  {
+    missile: [
+      { dc: 2, dr: 0 },
+      { dc: -2, dr: 0 },
+      { dc: 0, dr: 2 },
+      { dc: 0, dr: -2 },
+      { dc: 2, dr: 2 },
+      { dc: 2, dr: -2 },
+      { dc: -2, dr: 2 },
+      { dc: -2, dr: -2 },
+    ],
+    pirate: [
+      { dc: 2, dr: 2 },
+      { dc: 2, dr: -2 },
+      { dc: -2, dr: 2 },
+      { dc: -2, dr: -2 },
+    ],
+    jammer: [
+      { dc: 2, dr: 0 },
+      { dc: -2, dr: 0 },
+      { dc: 0, dr: 2 },
+      { dc: 0, dr: -2 },
+    ],
+    defence: [
+      { dc: 1, dr: 0 },
+      { dc: -1, dr: 0 },
+      { dc: 0, dr: 1 },
+      { dc: 0, dr: -1 },
+      { dc: 1, dr: 1 },
+      { dc: 1, dr: -1 },
+      { dc: -1, dr: 1 },
+      { dc: -1, dr: -1 },
+    ],
+  };
 
 // ---------------------------------------------------------------------------
 // Mode presets

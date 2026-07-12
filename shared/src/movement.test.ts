@@ -3,10 +3,16 @@ import {
   GOLD_PRODUCTION_CONFIG,
   ISLAND_DEF,
   PLAYER_COLORS,
+  WEAPON_OFFSETS,
 } from "./constants.js";
 import { createGame } from "./createGame.js";
-import { applyMove, legalMoves } from "./movement.js";
-import type { GameState, PlayerColor, ShipState } from "./schemas.js";
+import { applyMove, legalMoves, moveKey } from "./movement.js";
+import type {
+  GameState,
+  PlayerColor,
+  ShipState,
+  WeaponCard,
+} from "./schemas.js";
 
 // ---------------------------------------------------------------------------
 // Test state builder — 2-player (purple=p0, green=p1) with overrideable ships
@@ -80,9 +86,16 @@ function makeState(
       gold: 4000,
       cards: { missile: 12, pirate: 4, jammer: 4, defence: 4 },
     },
+    pendingAttack: null,
     rngSeed: 1,
     winner: null,
   };
+}
+
+// Narrows to plain movement actions — the movement describes below query
+// states where no other action type can exist (no cards, no inventories).
+function moveActions(state: GameState) {
+  return legalMoves(state).filter((m) => m.type === "move");
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +115,7 @@ describe("legalMoves: cruiser / corvette", () => {
         },
       ],
     });
-    const moves = legalMoves(state).filter(
+    const moves = moveActions(state).filter(
       (m) => m.shipId === "purple-cruiser",
     );
     expect(moves).toHaveLength(8);
@@ -135,7 +148,7 @@ describe("legalMoves: cruiser / corvette", () => {
       ],
     });
     expect(
-      legalMoves(state).some((m) => m.to.col === 4 && m.to.row === 6),
+      moveActions(state).some((m) => m.to.col === 4 && m.to.row === 6),
     ).toBe(false);
   });
 
@@ -159,7 +172,7 @@ describe("legalMoves: cruiser / corvette", () => {
       ],
     });
     expect(
-      legalMoves(state).some(
+      moveActions(state).some(
         (m) =>
           m.shipId === "purple-cruiser" && m.to.col === 5 && m.to.row === 5,
       ),
@@ -186,7 +199,7 @@ describe("legalMoves: cruiser / corvette", () => {
       ],
     });
     expect(
-      legalMoves(state).some(
+      moveActions(state).some(
         (m) =>
           m.shipId === "purple-cruiser" && m.to.col === 5 && m.to.row === 5,
       ),
@@ -214,7 +227,7 @@ describe("legalMoves: cruiser / corvette", () => {
       ],
     });
     expect(
-      legalMoves(state).some(
+      moveActions(state).some(
         (m) =>
           m.shipId === "purple-cruiser" &&
           m.to.col === greenBase.col &&
@@ -247,7 +260,7 @@ describe("legalMoves: cruiser / corvette", () => {
       // islandOwnership.yellow remains null — green doesn't own it
     });
     expect(
-      legalMoves(state).some(
+      moveActions(state).some(
         (m) =>
           m.shipId === "purple-cruiser" &&
           m.to.col === yellowBase.col &&
@@ -269,7 +282,7 @@ describe("legalMoves: cruiser / corvette", () => {
       ],
     });
     expect(
-      legalMoves(state).filter((m) => m.shipId === "purple-cruiser"),
+      moveActions(state).filter((m) => m.shipId === "purple-cruiser"),
     ).toHaveLength(0);
   });
 });
@@ -294,7 +307,7 @@ describe("legalMoves: destroyer", () => {
     });
 
   it("all 4 orthogonal 1-zone moves from (4,4)", () => {
-    const moves = legalMoves(d()).filter(
+    const moves = moveActions(d()).filter(
       (m) => m.shipId === "purple-destroyer",
     );
     expect(moves.some((m) => m.to.col === 5 && m.to.row === 4)).toBe(true);
@@ -305,7 +318,7 @@ describe("legalMoves: destroyer", () => {
 
   it("diagonal (5,5) is NOT legal for destroyer", () => {
     expect(
-      legalMoves(d()).some(
+      moveActions(d()).some(
         (m) =>
           m.shipId === "purple-destroyer" && m.to.col === 5 && m.to.row === 5,
       ),
@@ -314,7 +327,7 @@ describe("legalMoves: destroyer", () => {
 
   it("2-zone orthogonal (6,4) is legal when (5,4) is clear", () => {
     expect(
-      legalMoves(d()).some(
+      moveActions(d()).some(
         (m) =>
           m.shipId === "purple-destroyer" && m.to.col === 6 && m.to.row === 4,
       ),
@@ -331,7 +344,7 @@ describe("legalMoves: destroyer", () => {
         blocked: false,
       },
     ]);
-    const hits = legalMoves(state).filter(
+    const hits = moveActions(state).filter(
       (m) =>
         m.shipId === "purple-destroyer" && m.to.col === 5 && m.to.row === 4,
     );
@@ -348,7 +361,7 @@ describe("legalMoves: destroyer", () => {
         blocked: false,
       },
     ]);
-    const moves = legalMoves(state).filter(
+    const moves = moveActions(state).filter(
       (m) => m.shipId === "purple-destroyer",
     );
     expect(moves.some((m) => m.to.col === 5 && m.to.row === 4)).toBe(false);
@@ -357,7 +370,7 @@ describe("legalMoves: destroyer", () => {
 
   it("diagonal 2-zone (6,6) is NOT legal for destroyer", () => {
     expect(
-      legalMoves(d()).some(
+      moveActions(d()).some(
         (m) =>
           m.shipId === "purple-destroyer" && m.to.col === 6 && m.to.row === 6,
       ),
@@ -365,7 +378,7 @@ describe("legalMoves: destroyer", () => {
   });
 
   it("near-edge: (8,4) legal from (7,4); out-of-bounds (9,4) and (10,4) filtered", () => {
-    const moves = legalMoves(d({ col: 7, row: 4 })).filter(
+    const moves = moveActions(d({ col: 7, row: 4 })).filter(
       (m) => m.shipId === "purple-destroyer",
     );
     expect(moves.some((m) => m.to.col === 8 && m.to.row === 4)).toBe(true);
@@ -393,7 +406,7 @@ describe("legalMoves: submarine", () => {
     });
 
   it("all 4 orthogonal 1-zone moves from (4,4)", () => {
-    const moves = legalMoves(s()).filter((m) => m.shipId === "purple-sub");
+    const moves = moveActions(s()).filter((m) => m.shipId === "purple-sub");
     expect(moves.some((m) => m.to.col === 5 && m.to.row === 4)).toBe(true);
     expect(moves.some((m) => m.to.col === 3 && m.to.row === 4)).toBe(true);
     expect(moves.some((m) => m.to.col === 4 && m.to.row === 5)).toBe(true);
@@ -402,7 +415,7 @@ describe("legalMoves: submarine", () => {
 
   it("diagonal 1-zone (5,5) is NOT legal for submarine", () => {
     expect(
-      legalMoves(s()).some(
+      moveActions(s()).some(
         (m) => m.shipId === "purple-sub" && m.to.col === 5 && m.to.row === 5,
       ),
     ).toBe(false);
@@ -410,7 +423,7 @@ describe("legalMoves: submarine", () => {
 
   it("2-zone diagonal (6,6) is legal when (5,5) is clear", () => {
     expect(
-      legalMoves(s()).some(
+      moveActions(s()).some(
         (m) => m.shipId === "purple-sub" && m.to.col === 6 && m.to.row === 6,
       ),
     ).toBe(true);
@@ -426,7 +439,7 @@ describe("legalMoves: submarine", () => {
         blocked: false,
       },
     ]);
-    const moves = legalMoves(state).filter((m) => m.shipId === "purple-sub");
+    const moves = moveActions(state).filter((m) => m.shipId === "purple-sub");
     expect(moves.some((m) => m.to.col === 5 && m.to.row === 5)).toBe(true);
     expect(moves.some((m) => m.to.col === 6 && m.to.row === 6)).toBe(false);
   });
@@ -441,7 +454,7 @@ describe("legalMoves: submarine", () => {
         blocked: false,
       },
     ]);
-    const moves = legalMoves(state).filter((m) => m.shipId === "purple-sub");
+    const moves = moveActions(state).filter((m) => m.shipId === "purple-sub");
     expect(moves.some((m) => m.to.col === 5 && m.to.row === 5)).toBe(false);
     expect(moves.some((m) => m.to.col === 6 && m.to.row === 6)).toBe(false);
   });
@@ -470,7 +483,7 @@ describe("legalMoves: submarine", () => {
         },
       ],
     });
-    const moves = legalMoves(state).filter((m) => m.shipId === "purple-sub");
+    const moves = moveActions(state).filter((m) => m.shipId === "purple-sub");
     expect(moves.some((m) => posEq(m.to, greenBase))).toBe(false);
     expect(moves.some((m) => posEq(m.to, farPos))).toBe(false);
   });
@@ -498,13 +511,13 @@ describe("legalMoves: submarine", () => {
         },
       ],
     });
-    const moves = legalMoves(state).filter((m) => m.shipId === "purple-sub");
+    const moves = moveActions(state).filter((m) => m.shipId === "purple-sub");
     expect(moves.some((m) => posEq(m.to, greenBase))).toBe(false);
   });
 
   it("2-zone orthogonal (6,4) is NOT legal for submarine", () => {
     expect(
-      legalMoves(s()).some(
+      moveActions(s()).some(
         (m) => m.shipId === "purple-sub" && m.to.col === 6 && m.to.row === 4,
       ),
     ).toBe(false);
@@ -1205,5 +1218,794 @@ describe("ram: relaunchEnabled — destroyed non-cruiser returns to inventory", 
         .find((p) => p.id === P1)
         ?.inventory.some((sh) => sh.id === "green-corvette"),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weapons (§7)
+// ---------------------------------------------------------------------------
+
+function withHand(
+  state: GameState,
+  idx: number,
+  hand: WeaponCard[],
+): GameState {
+  const s = structuredClone(state) as GameState;
+  s.players[idx]!.hand = [...hand];
+  return s;
+}
+
+// Per-type card counts across all hands + HQ — the conservation invariant
+function cardTotals(state: GameState): Record<WeaponCard, number> {
+  const totals = { ...state.hq.cards };
+  for (const p of state.players) {
+    for (const c of p.hand) totals[c] += 1;
+  }
+  return totals;
+}
+
+const enemyAt = (col: number, row: number): ShipState => ({
+  id: `enemy-${col}-${row}`,
+  type: "corvette",
+  ownerId: P1,
+  pos: { col, row },
+  blocked: false,
+});
+
+describe("legalMoves: missile range", () => {
+  const cruiser = (blocked = false): ShipState => ({
+    id: "purple-cruiser",
+    type: "cruiser",
+    ownerId: P0,
+    pos: { col: 4, row: 4 },
+    blocked,
+  });
+
+  it("enemies at all 8 distance-2 offsets → exactly 8 missile targets", () => {
+    const offsets = WEAPON_OFFSETS.missile;
+    const state = withHand(
+      makeState({
+        ships: [cruiser(), ...offsets.map((o) => enemyAt(4 + o.dc, 4 + o.dr))],
+      }),
+      0,
+      ["missile"],
+    );
+    const weapons = legalMoves(state).filter((m) => m.type === "useWeapon");
+    expect(weapons).toHaveLength(8);
+    for (const o of offsets) {
+      expect(
+        weapons.some((m) => m.to.col === 4 + o.dc && m.to.row === 4 + o.dr),
+      ).toBe(true);
+    }
+  });
+
+  it("distance-1 and distance-3 enemies NOT offered", () => {
+    const state = withHand(
+      makeState({ ships: [cruiser(), enemyAt(5, 4), enemyAt(7, 4)] }),
+      0,
+      ["missile"],
+    );
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+
+  it("empty in-range zone NOT offered", () => {
+    const state = withHand(makeState({ ships: [cruiser()] }), 0, ["missile"]);
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+
+  it("own ship in range NOT offered", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          cruiser(),
+          {
+            id: "purple-corvette",
+            type: "corvette",
+            ownerId: P0,
+            pos: { col: 6, row: 4 },
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["missile"],
+    );
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+
+  it("no missile card in hand → no missile moves", () => {
+    const state = makeState({ ships: [cruiser(), enemyAt(6, 4)] });
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+
+  it("blocked cruiser cannot fire", () => {
+    const state = withHand(
+      makeState({ ships: [cruiser(true), enemyAt(6, 4)] }),
+      0,
+      ["missile"],
+    );
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+
+  it("CAN target an enemy on its own command base (weapons ignore base protection §3)", () => {
+    const greenBase = ISLAND_DEF.green.commandBase; // (1,4), owned by P1
+    const state = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-cruiser",
+            type: "cruiser",
+            ownerId: P0,
+            pos: { col: greenBase.col + 2, row: greenBase.row },
+            blocked: false,
+          },
+          {
+            id: "green-cruiser",
+            type: "cruiser",
+            ownerId: P1,
+            pos: greenBase,
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["missile"],
+    );
+    expect(
+      legalMoves(state).some(
+        (m) => m.type === "useWeapon" && posEq(m.to, greenBase),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("legalMoves: pirate range", () => {
+  const destroyer: ShipState = {
+    id: "purple-destroyer",
+    type: "destroyer",
+    ownerId: P0,
+    pos: { col: 4, row: 4 },
+    blocked: false,
+  };
+
+  it("4 diagonal targets × 3 steal choices", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          destroyer,
+          enemyAt(6, 6),
+          enemyAt(6, 2),
+          enemyAt(2, 6),
+          enemyAt(2, 2),
+        ],
+      }),
+      0,
+      ["pirate"],
+    );
+    const weapons = legalMoves(state).filter((m) => m.type === "useWeapon");
+    expect(weapons).toHaveLength(12);
+    for (const o of WEAPON_OFFSETS.pirate) {
+      const steals = weapons
+        .filter((m) => m.to.col === 4 + o.dc && m.to.row === 4 + o.dr)
+        .map((m) => m.steal)
+        .sort();
+      expect(steals).toEqual(["cards", "gold", "papers"]);
+    }
+  });
+
+  it("orthogonal distance-2 enemy NOT offered", () => {
+    const state = withHand(
+      makeState({ ships: [destroyer, enemyAt(6, 4)] }),
+      0,
+      ["pirate"],
+    );
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("legalMoves: jammer range", () => {
+  const sub: ShipState = {
+    id: "purple-sub",
+    type: "submarine",
+    ownerId: P0,
+    pos: { col: 4, row: 4 },
+    blocked: false,
+  };
+
+  it("exactly the 4 orthogonal distance-2 targets", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          sub,
+          enemyAt(6, 4),
+          enemyAt(2, 4),
+          enemyAt(4, 6),
+          enemyAt(4, 2),
+        ],
+      }),
+      0,
+      ["jammer"],
+    );
+    const weapons = legalMoves(state).filter((m) => m.type === "useWeapon");
+    expect(weapons).toHaveLength(4);
+    for (const o of WEAPON_OFFSETS.jammer) {
+      expect(
+        weapons.some((m) => m.to.col === 4 + o.dc && m.to.row === 4 + o.dr),
+      ).toBe(true);
+    }
+  });
+
+  it("diagonal enemy NOT offered", () => {
+    const state = withHand(makeState({ ships: [sub, enemyAt(6, 6)] }), 0, [
+      "jammer",
+    ]);
+    expect(
+      legalMoves(state).filter((m) => m.type === "useWeapon"),
+    ).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defence interrupt
+// ---------------------------------------------------------------------------
+
+// Purple cruiser (4,4) missiles the green corvette at (6,4); green cruiser
+// parked on green's base. Returns the PENDED state.
+function pendMissile(
+  extra: ShipState[] = [],
+  greenHand: WeaponCard[] = [],
+): GameState {
+  const base = makeState({
+    ships: [
+      {
+        id: "purple-cruiser",
+        type: "cruiser",
+        ownerId: P0,
+        pos: { col: 4, row: 4 },
+        blocked: false,
+      },
+      {
+        id: "green-corvette",
+        type: "corvette",
+        ownerId: P1,
+        pos: { col: 6, row: 4 },
+        blocked: false,
+      },
+      {
+        id: "green-cruiser",
+        type: "cruiser",
+        ownerId: P1,
+        pos: ISLAND_DEF.green.commandBase,
+        blocked: false,
+      },
+      ...extra,
+    ],
+  });
+  const s = withHand(withHand(base, 0, ["missile"]), 1, greenHand);
+  return applyMove(s, {
+    type: "useWeapon",
+    shipId: "purple-cruiser",
+    to: { col: 6, row: 4 },
+  });
+}
+
+describe("defence interrupt: attack pends", () => {
+  it("useWeapon sets pendingAttack; target alive; card hand→HQ; turn NOT advanced", () => {
+    const pended = pendMissile();
+    expect(pended.pendingAttack).toEqual({
+      attackingShipId: "purple-cruiser",
+      targetShipId: "green-corvette",
+      steal: null,
+    });
+    expect(pended.board.ships.some((s) => s.id === "green-corvette")).toBe(
+      true,
+    );
+    expect(pended.players[0]!.hand).toEqual([]);
+    expect(pended.hq.cards.missile).toBe(13);
+    expect(pended.currentPlayerIndex).toBe(0);
+    expect(pended.phase).toBe("playing");
+  });
+
+  it("while pending, legalMoves returns ONLY defender options", () => {
+    const moves = legalMoves(pendMissile());
+    expect(moves.length).toBeGreaterThan(0);
+    expect(
+      moves.every((m) => m.type === "defend" || m.type === "decline"),
+    ).toBe(true);
+  });
+
+  it("defender with no defence card → decline is the only option", () => {
+    expect(legalMoves(pendMissile())).toEqual([{ type: "decline" }]);
+  });
+
+  it("defend offered with card + adjacent unblocked corvette (not the target itself)", () => {
+    const cv2: ShipState = {
+      id: "green-corvette-2",
+      type: "corvette",
+      ownerId: P1,
+      pos: { col: 6, row: 5 },
+      blocked: false,
+    };
+    const moves = legalMoves(pendMissile([cv2], ["defence"]));
+    expect(moves).toHaveLength(2);
+    expect(
+      moves.some((m) => m.type === "defend" && m.shipId === "green-corvette-2"),
+    ).toBe(true);
+    expect(
+      moves.some((m) => m.type === "defend" && m.shipId === "green-corvette"),
+    ).toBe(false);
+  });
+
+  it("no self-defence: a lone targeted corvette holding defence cannot protect itself", () => {
+    expect(legalMoves(pendMissile([], ["defence"]))).toEqual([
+      { type: "decline" },
+    ]);
+  });
+
+  it("card but no corvette in range → decline only", () => {
+    const farCv: ShipState = {
+      id: "green-corvette-2",
+      type: "corvette",
+      ownerId: P1,
+      pos: { col: 0, row: 8 },
+      blocked: false,
+    };
+    expect(legalMoves(pendMissile([farCv], ["defence"]))).toEqual([
+      { type: "decline" },
+    ]);
+  });
+
+  it("blocked adjacent corvette cannot defend", () => {
+    const blockedCv: ShipState = {
+      id: "green-corvette-2",
+      type: "corvette",
+      ownerId: P1,
+      pos: { col: 6, row: 5 },
+      blocked: true,
+    };
+    expect(legalMoves(pendMissile([blockedCv], ["defence"]))).toEqual([
+      { type: "decline" },
+    ]);
+  });
+});
+
+describe("defence interrupt: resolution", () => {
+  const cv2: ShipState = {
+    id: "green-corvette-2",
+    type: "corvette",
+    ownerId: P1,
+    pos: { col: 6, row: 5 },
+    blocked: false,
+  };
+
+  it("defend: both cards to HQ, target spared, turn advances", () => {
+    const pended = pendMissile([cv2], ["defence"]);
+    const r = applyMove(pended, { type: "defend", shipId: "green-corvette-2" });
+    expect(r.hq.cards.missile).toBe(13);
+    expect(r.hq.cards.defence).toBe(5);
+    expect(r.players[1]!.hand).toEqual([]);
+    expect(r.board.ships.some((s) => s.id === "green-corvette")).toBe(true);
+    expect(r.pendingAttack).toBeNull();
+    expect(r.currentPlayerIndex).toBe(1);
+    expect(r.phase).toBe("playing");
+  });
+
+  it("decline missile: non-cruiser destroyed → owner inventory (relaunchEnabled)", () => {
+    const r = applyMove(pendMissile(), { type: "decline" });
+    expect(r.board.ships.some((s) => s.id === "green-corvette")).toBe(false);
+    expect(r.players[1]!.inventory.some((s) => s.id === "green-corvette")).toBe(
+      true,
+    );
+    expect(r.pendingAttack).toBeNull();
+    expect(r.currentPlayerIndex).toBe(1);
+  });
+
+  it("decline missile with relaunchEnabled=false: ship vanishes", () => {
+    const base = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-cruiser",
+            type: "cruiser",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          enemyAt(6, 4),
+          {
+            id: "green-cruiser",
+            type: "cruiser",
+            ownerId: P1,
+            pos: ISLAND_DEF.green.commandBase,
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["missile"],
+    );
+    base.mode = { ...base.mode, relaunchEnabled: false };
+    const pended = applyMove(base, {
+      type: "useWeapon",
+      shipId: "purple-cruiser",
+      to: { col: 6, row: 4 },
+    });
+    const r = applyMove(pended, { type: "decline" });
+    expect(r.board.ships.some((s) => s.id === "enemy-6-4")).toBe(false);
+    expect(r.players[1]!.inventory).toHaveLength(0);
+  });
+
+  it("decline missile on a cruiser: 2-player game finishes, attacker wins", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-cruiser",
+            type: "cruiser",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          {
+            id: "green-cruiser",
+            type: "cruiser",
+            ownerId: P1,
+            pos: { col: 6, row: 4 },
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["missile"],
+    );
+    const pended = applyMove(state, {
+      type: "useWeapon",
+      shipId: "purple-cruiser",
+      to: { col: 6, row: 4 },
+    });
+    const r = applyMove(pended, { type: "decline" });
+    expect(r.players[1]!.defeated).toBe(true);
+    expect(r.phase).toBe("finished");
+    expect(r.winner).toBe(P0);
+  });
+
+  it("4-player mid-game elimination: turn advances to next LIVING player, game NOT finished", () => {
+    const full = createGame(
+      GOLD_PRODUCTION_CONFIG,
+      ["p1", "p2", "p3", "p4"],
+      7,
+    );
+    const s = structuredClone(full) as GameState;
+    const attacker = s.players[0]!;
+    const victim = s.players[1]!;
+    const atkCruiser = s.board.ships.find((sh) => sh.ownerId === attacker.id)!;
+    const vicCruiser = s.board.ships.find((sh) => sh.ownerId === victim.id)!;
+    atkCruiser.pos = { col: 4, row: 4 };
+    vicCruiser.pos = { col: 6, row: 4 };
+    attacker.hand = ["missile"];
+
+    const pended = applyMove(s, {
+      type: "useWeapon",
+      shipId: atkCruiser.id,
+      to: { col: 6, row: 4 },
+    });
+    const r = applyMove(pended, { type: "decline" });
+    expect(r.players[1]!.defeated).toBe(true);
+    expect(r.board.ships.some((sh) => sh.ownerId === victim.id)).toBe(false);
+    expect(r.phase).toBe("playing");
+    expect(r.currentPlayerIndex).toBe(2);
+  });
+
+  it("decline jammer: target blocked and contributes no moves on its owner's turn", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-sub",
+            type: "submarine",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          {
+            id: "green-corvette",
+            type: "corvette",
+            ownerId: P1,
+            pos: { col: 6, row: 4 },
+            blocked: false,
+          },
+          {
+            id: "green-cruiser",
+            type: "cruiser",
+            ownerId: P1,
+            pos: ISLAND_DEF.green.commandBase,
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["jammer"],
+    );
+    const pended = applyMove(state, {
+      type: "useWeapon",
+      shipId: "purple-sub",
+      to: { col: 6, row: 4 },
+    });
+    const r = applyMove(pended, { type: "decline" });
+    expect(r.board.ships.find((s) => s.id === "green-corvette")?.blocked).toBe(
+      true,
+    );
+    // Now green's turn: the jammed corvette contributes nothing
+    expect(r.currentPlayerIndex).toBe(1);
+    const greenMoves = legalMoves(r);
+    expect(
+      greenMoves.some((m) => "shipId" in m && m.shipId === "green-corvette"),
+    ).toBe(false);
+    expect(greenMoves.length).toBeGreaterThan(0); // cruiser still moves
+  });
+});
+
+describe("pirate steals", () => {
+  // Purple destroyer (4,4) with a pirate card; green corvette at (6,6)
+  function pirateState(): GameState {
+    return withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-destroyer",
+            type: "destroyer",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          enemyAt(6, 6),
+          {
+            id: "green-cruiser",
+            type: "cruiser",
+            ownerId: P1,
+            pos: ISLAND_DEF.green.commandBase,
+            blocked: false,
+          },
+        ],
+      }),
+      0,
+      ["pirate"],
+    );
+  }
+
+  function steal(state: GameState, choice: "gold" | "papers" | "cards") {
+    const pended = applyMove(state, {
+      type: "useWeapon",
+      shipId: "purple-destroyer",
+      to: { col: 6, row: 6 },
+      steal: choice,
+    });
+    return applyMove(pended, { type: "decline" });
+  }
+
+  it("steal gold: full transfer, total conserved", () => {
+    const state = pirateState();
+    state.players[1]!.gold = 700;
+    const before =
+      state.players[0]!.gold + state.players[1]!.gold + state.hq.gold;
+    const r = steal(state, "gold");
+    expect(r.players[0]!.gold).toBe(1000 + 700);
+    expect(r.players[1]!.gold).toBe(0);
+    expect(r.players[0]!.gold + r.players[1]!.gold + r.hq.gold).toBe(before);
+  });
+
+  it("steal papers: full transfer", () => {
+    const state = pirateState();
+    state.players[1]!.papers = 3;
+    const r = steal(state, "papers");
+    expect(r.players[0]!.papers).toBe(3);
+    expect(r.players[1]!.papers).toBe(0);
+  });
+
+  it("steal cards: hands merge, per-type totals conserved", () => {
+    const state = withHand(pirateState(), 1, ["jammer", "defence"]);
+    const before = cardTotals(state);
+    const r = steal(state, "cards");
+    expect(r.players[0]!.hand.sort()).toEqual(["defence", "jammer"]);
+    expect(r.players[1]!.hand).toEqual([]);
+    expect(cardTotals(r)).toEqual(before);
+  });
+
+  it("steal from empty is LEGAL and a conserving no-op", () => {
+    const state = pirateState();
+    state.players[1]!.gold = 0; // and hand is already empty
+    const legal = legalMoves(state);
+    expect(
+      legal.some((m) => m.type === "useWeapon" && m.steal === "cards"),
+    ).toBe(true);
+    expect(
+      legal.some((m) => m.type === "useWeapon" && m.steal === "gold"),
+    ).toBe(true);
+
+    const before = cardTotals(state);
+    const r = steal(state, "cards");
+    expect(r.players[0]!.hand).toEqual([]); // pirate card went to HQ at attack time
+    expect(cardTotals(r)).toEqual(before);
+
+    // steal gold at 0 gold: equally legal, transfers nothing
+    const r2 = steal(state, "gold");
+    expect(r2.players[0]!.gold).toBe(1000);
+    expect(r2.players[1]!.gold).toBe(0);
+  });
+});
+
+describe("weapons: illegal moves", () => {
+  it("useWeapon at an out-of-range zone throws", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-cruiser",
+            type: "cruiser",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          enemyAt(5, 4),
+        ],
+      }),
+      0,
+      ["missile"],
+    );
+    expect(() =>
+      applyMove(state, {
+        type: "useWeapon",
+        shipId: "purple-cruiser",
+        to: { col: 5, row: 4 },
+      }),
+    ).toThrow("illegal move");
+  });
+
+  it("pirate without a steal choice throws", () => {
+    const state = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-destroyer",
+            type: "destroyer",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          enemyAt(6, 6),
+        ],
+      }),
+      0,
+      ["pirate"],
+    );
+    expect(() =>
+      applyMove(state, {
+        type: "useWeapon",
+        shipId: "purple-destroyer",
+        to: { col: 6, row: 6 },
+      }),
+    ).toThrow("illegal move");
+  });
+
+  it("defend and decline throw when no attack pends", () => {
+    const state = makeState();
+    expect(() =>
+      applyMove(state, { type: "defend", shipId: "purple-cruiser" }),
+    ).toThrow("illegal move");
+    expect(() => applyMove(state, { type: "decline" })).toThrow("illegal move");
+  });
+
+  it("move and launch throw while an attack pends", () => {
+    const pended = pendMissile();
+    expect(() =>
+      applyMove(pended, {
+        type: "move",
+        shipId: "purple-cruiser",
+        to: { col: 4, row: 5 },
+      }),
+    ).toThrow("illegal move");
+    expect(() =>
+      applyMove(pended, {
+        type: "launch",
+        shipId: "green-corvette-9",
+        to: { col: 0, row: 4 },
+      }),
+    ).toThrow("illegal move");
+  });
+
+  it("a second useWeapon while an attack pends throws (no nesting)", () => {
+    // Green cruiser at (2,4) COULD missile the purple cruiser at (4,4) on its
+    // own turn — prove the pending state alone is what blocks it.
+    const greenCruiser: ShipState = {
+      id: "green-cruiser-attacker",
+      type: "cruiser",
+      ownerId: P1,
+      pos: { col: 2, row: 4 },
+      blocked: false,
+    };
+    const nested = {
+      type: "useWeapon",
+      shipId: "green-cruiser-attacker",
+      to: { col: 4, row: 4 },
+    } as const;
+
+    // Counterfactual: legal for green when nothing pends
+    const noPend = withHand(
+      makeState({
+        ships: [
+          {
+            id: "purple-cruiser",
+            type: "cruiser",
+            ownerId: P0,
+            pos: { col: 4, row: 4 },
+            blocked: false,
+          },
+          greenCruiser,
+        ],
+        currentPlayerIndex: 1,
+      }),
+      1,
+      ["missile"],
+    );
+    expect(legalMoves(noPend).some((m) => moveKey(m) === moveKey(nested))).toBe(
+      true,
+    );
+
+    // With purple's attack pending, the same intent throws
+    const pended = pendMissile([greenCruiser], ["missile"]);
+    expect(() => applyMove(pended, nested)).toThrow("illegal move");
+  });
+});
+
+describe("weapons: invariants", () => {
+  it("card totals conserved through attack→defend and attack→decline", () => {
+    const cv2: ShipState = {
+      id: "green-corvette-2",
+      type: "corvette",
+      ownerId: P1,
+      pos: { col: 6, row: 5 },
+      blocked: false,
+    };
+    // defend path
+    const pendedD = pendMissile([cv2], ["defence"]);
+    const totals = { missile: 13, pirate: 4, jammer: 4, defence: 4 };
+    // (attacker started with 1 missile: 12 HQ + 1 hand = 13 total; defence 4+1=5)
+    expect(cardTotals(pendedD)).toEqual({ ...totals, defence: 5 });
+    const defended = applyMove(pendedD, {
+      type: "defend",
+      shipId: "green-corvette-2",
+    });
+    expect(cardTotals(defended)).toEqual({ ...totals, defence: 5 });
+
+    // decline path
+    const pended = pendMissile();
+    expect(cardTotals(pended)).toEqual(totals);
+    const declined = applyMove(pended, { type: "decline" });
+    expect(cardTotals(declined)).toEqual(totals);
+  });
+
+  it("moveKey: every action type yields a distinct key on confusable fields", () => {
+    const to = { col: 3, row: 3 };
+    const keys = [
+      moveKey({ type: "move", shipId: "x", to }),
+      moveKey({ type: "launch", shipId: "x", to }),
+      moveKey({ type: "useWeapon", shipId: "x", to }),
+      moveKey({ type: "useWeapon", shipId: "x", to, steal: "gold" }),
+      moveKey({ type: "defend", shipId: "x" }),
+      moveKey({ type: "decline" }),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

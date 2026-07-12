@@ -108,6 +108,20 @@ export const IslandOwnershipSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Pending attack — a used weapon does not resolve until the defender responds
+// (defend or decline). Attacker id / card type are derived from the attacking
+// ship, not stored.
+// ---------------------------------------------------------------------------
+
+export const StealChoiceSchema = z.enum(["gold", "papers", "cards"]);
+
+export const PendingAttackSchema = z.object({
+  attackingShipId: z.string(),
+  targetShipId: z.string(),
+  steal: StealChoiceSchema.nullable(), // pirate's choice; null for missile/jammer
+});
+
+// ---------------------------------------------------------------------------
 // Game state
 // ---------------------------------------------------------------------------
 
@@ -120,6 +134,7 @@ export const GameStateSchema = z.object({
   board: BoardStateSchema,
   islandOwnership: IslandOwnershipSchema,
   hq: HQStateSchema,
+  pendingAttack: PendingAttackSchema.nullable(),
   rngSeed: z.number().int(),
   winner: z.string().nullable(),
 });
@@ -140,9 +155,28 @@ export const LaunchActionSchema = z.object({
   to: PositionSchema,
 });
 
+export const UseWeaponActionSchema = z.object({
+  type: z.literal("useWeapon"),
+  shipId: z.string(), // acting ship; the card is derived from its type
+  to: PositionSchema, // target zone (§7: "one target zone")
+  steal: StealChoiceSchema.optional(), // pirate only
+});
+
+export const DefendActionSchema = z.object({
+  type: z.literal("defend"),
+  shipId: z.string(), // the defending corvette; target derived from pendingAttack
+});
+
+export const DeclineActionSchema = z.object({
+  type: z.literal("decline"),
+});
+
 export const MoveSchema = z.discriminatedUnion("type", [
   MoveActionSchema,
   LaunchActionSchema,
+  UseWeaponActionSchema,
+  DefendActionSchema,
+  DeclineActionSchema,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -162,9 +196,14 @@ export type BoardState = z.infer<typeof BoardStateSchema>;
 export type HQState = z.infer<typeof HQStateSchema>;
 export type ModeConfig = z.infer<typeof ModeConfigSchema>;
 export type IslandOwnership = z.infer<typeof IslandOwnershipSchema>;
+export type StealChoice = z.infer<typeof StealChoiceSchema>;
+export type PendingAttack = z.infer<typeof PendingAttackSchema>;
 export type GameState = z.infer<typeof GameStateSchema>;
 export type MoveAction = z.infer<typeof MoveActionSchema>;
 export type LaunchAction = z.infer<typeof LaunchActionSchema>;
+export type UseWeaponAction = z.infer<typeof UseWeaponActionSchema>;
+export type DefendAction = z.infer<typeof DefendActionSchema>;
+export type DeclineAction = z.infer<typeof DeclineActionSchema>;
 export type Move = z.infer<typeof MoveSchema>;
 
 // ---------------------------------------------------------------------------
